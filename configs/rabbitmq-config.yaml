@@ -4,6 +4,16 @@ metadata:
   name: rabbitmq
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-credentials
+  namespace: rabbitmq
+type: Opaque
+stringData:
+  rabbitmq-username: admin
+  rabbitmq-password: strongpassword
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: rabbitmq-headless
@@ -62,12 +72,21 @@ spec:
             - containerPort: 5672
             - containerPort: 15672
           env:
-            - name: RABBITMQ_USERNAME
-              value: admin
-            - name: RABBITMQ_PASSWORD
-              value: strongpassword
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: rabbitmq-username
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: rabbitmq-password
             - name: RABBITMQ_ERLANG_COOKIE
-              value: rabbitcookie123
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: rabbitmq-password
             - name: RABBITMQ_ERLANG_NODE
               value: !Sub 'rabbit@${HOSTNAME}.rabbitmq-headless.rabbitmq.svc.cluster.local'
             - name: RABBITMQ_CLUSTER_PARTITION_HANDLING
@@ -110,3 +129,48 @@ spec:
                 name: rabbitmq-management
                 port:
                   number: 15672
+
+---
+# RabbitMQ exporter deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq-exporter
+  namespace: rabbitmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq-exporter
+  template:
+    metadata:
+      labels:
+        app: rabbitmq-exporter
+    spec:
+      containers:
+        - name: rabbitmq-exporter
+          image: kbudde/rabbitmq-exporter:v0.30.0
+          env:
+            - name: RABBITMQ_URI
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: rabbitmq-password
+          ports:
+            - containerPort: 9419
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-exporter
+  namespace: rabbitmq
+  annotations:
+    prometheus.io/scrape: 'true'
+    prometheus.io/port: '9419'
+spec:
+  ports:
+    - port: 9419
+      targetPort: 9419
+  selector:
+    app: rabbitmq-exporter

@@ -1,109 +1,131 @@
 version: '3.8'
 services:
-  zookeeper-dev:
-    image: bitnami/zookeeper:3.8
-    container_name: zookeeper-dev
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-      - ZOO_ENABLE_AUTH=no
-      - ZOO_SERVERS=server.1=zookeeper-dev:2888:3888
-    ports:
-      - 22181:2181
-    networks:
-      - dev_net
-    volumes:
-      - zookeeper-dev-data:/bitnami/zookeeper
-
+  # Dev environment - isolated backend network (no broker ports published to host)
   kafka-dev:
-    image: bitnami/kafka:latest
+    image: apache/kafka:3.4.0
     container_name: kafka-dev
-    depends_on:
-      - zookeeper-dev
     environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper-dev:2181
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:29092
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-    ports:
-      - 29092:9092
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_NODE_ID=1
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-dev:9093
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-dev:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=false
     networks:
-      - dev_net
+      - dev_backend
     volumes:
-      - kafka-dev-data:/bitnami/kafka
+      - kafka-dev-data:/var/lib/kafka
 
   rabbitmq-dev:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.11-management
     container_name: rabbitmq-dev
     environment:
-      - RABBITMQ_DEFAULT_USER=dev
-      - RABBITMQ_DEFAULT_PASS=devpass
+      RABBITMQ_DEFAULT_USER: dev
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEV_PASSWORD:-devchangeme}
+      RABBITMQ_DEFAULT_VHOST: /
     ports:
-      - 15672:15672
-      - 5672:5672
+      - 15672:15672  # management UI exposed for ops on host
     networks:
-      - dev_net
+      - dev_backend
+      - dev_mgmt
     volumes:
       - rabbitmq-dev-data:/var/lib/rabbitmq
 
-  zookeeper-qa:
-    image: bitnami/zookeeper:3.8
-    container_name: zookeeper-qa
+  kafka-dev-exporter:
+    image: danielqsj/kafka-exporter:1.2.0
+    container_name: kafka-dev-exporter
     environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-      - ZOO_ENABLE_AUTH=no
-      - ZOO_SERVERS=server.1=zookeeper-qa:2888:3888
-    ports:
-      - 22182:2181
+      - KAFKA_SERVER=kafka-dev:9092
     networks:
-      - qa_net
-    volumes:
-      - zookeeper-qa-data:/bitnami/zookeeper
+      - dev_backend
+    ports:
+      - 9308:9308
 
-  kafka-qa:
-    image: bitnami/kafka:latest
-    container_name: kafka-qa
-    depends_on:
-      - zookeeper-qa
+  rabbitmq-dev-exporter:
+    image: kbudde/rabbitmq-exporter:v0.30.0
+    container_name: rabbitmq-dev-exporter
     environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper-qa:2181
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:29093
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-    ports:
-      - 29093:9092
+      - RABBITMQ_URI=http://dev:${RABBITMQ_DEV_PASSWORD:-devchangeme}@rabbitmq-dev:15672
     networks:
-      - qa_net
+      - dev_backend
+    ports:
+      - 9419:9419
+
+  # QA environment - similarly isolated
+  kafka-qa:
+    image: apache/kafka:3.4.0
+    container_name: kafka-qa
+    environment:
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_NODE_ID=1
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-qa:9093
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-qa:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=false
+    networks:
+      - qa_backend
     volumes:
-      - kafka-qa-data:/bitnami/kafka
+      - kafka-qa-data:/var/lib/kafka
 
   rabbitmq-qa:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.11-management
     container_name: rabbitmq-qa
     environment:
-      - RABBITMQ_DEFAULT_USER=qa
-      - RABBITMQ_DEFAULT_PASS=qapass
+      RABBITMQ_DEFAULT_USER: qa
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_QA_PASSWORD:-qachangeme}
+      RABBITMQ_DEFAULT_VHOST: /
     ports:
       - 15674:15672
-      - 15675:5672
     networks:
-      - qa_net
+      - qa_backend
+      - qa_mgmt
     volumes:
       - rabbitmq-qa-data:/var/lib/rabbitmq
 
+  kafka-qa-exporter:
+    image: danielqsj/kafka-exporter:1.2.0
+    container_name: kafka-qa-exporter
+    environment:
+      - KAFKA_SERVER=kafka-qa:9092
+    networks:
+      - qa_backend
+    ports:
+      - 9309:9308
+
+  rabbitmq-qa-exporter:
+    image: kbudde/rabbitmq-exporter:v0.30.0
+    container_name: rabbitmq-qa-exporter
+    environment:
+      - RABBITMQ_URI=http://qa:${RABBITMQ_QA_PASSWORD:-qachangeme}@rabbitmq-qa:15672
+    networks:
+      - qa_backend
+    ports:
+      - 9420:9419
+
 networks:
-  dev_net:
+  dev_backend:
     driver: bridge
-  qa_net:
+    internal: true
+  dev_mgmt:
+    driver: bridge
+  qa_backend:
+    driver: bridge
+    internal: true
+  qa_mgmt:
     driver: bridge
 
 volumes:
-  zookeeper-dev-data:
   kafka-dev-data:
+    name: kafka-dev-data
   rabbitmq-dev-data:
-  zookeeper-qa-data:
+    name: rabbitmq-dev-data
   kafka-qa-data:
+    name: kafka-qa-data
   rabbitmq-qa-data:
+    name: rabbitmq-qa-data
