@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template para desplegar un cluster EKS productivo en las subnets
+  de producción de la VPC spoke, con un grupo de nodos gestionados de tres instancias.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: spoke-eks-cluster
+    Description: Nombre del cluster EKS.
+  ClusterVersion:
+    Type: String
+    Default: '1.27'
+    Description: Versión de Kubernetes para el cluster EKS.
+  NodeInstanceType:
+    Type: String
+    Default: t3.large
+    Description: Tipo de instancia para los nodos worker.
+  NodeDiskSize:
+    Type: Number
+    Default: 50
+    Description: Tamaño en GiB del volumen EBS para cada nodo.
+  ProdSubnetAId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet privada de producción A para el cluster.
+  ProdSubnetBId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet privada de producción B para el cluster.
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ''
+    Description: Par de llaves SSH opcional para acceso a los nodos.
+  NodeGroupKeyPair:
+    Type: String
+    Default: ''
+    Description: Nombre de par SSH para el grupo de nodos EKS, opcional.
+  NamePrefix:
+    Type: String
+    Default: spoke
+    Description: Prefijo para recursos.
+  EnvironmentTag:
+    Type: String
+    Default: production
+
+Conditions:
+  HasNodeGroupKeyPair: !Not [!Equals [!Ref NodeGroupKeyPair, '']]
+
+Resources:
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-eks-cluster-role'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-eks-nodegroup-role'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref ClusterVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref ProdSubnetAId
+          - !Ref ProdSubnetBId
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-eks-cluster'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub '${NamePrefix}-worker-group'
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      Subnets:
+        - !Ref ProdSubnetAId
+        - !Ref ProdSubnetBId
+      ScalingConfig:
+        MinSize: 3
+        DesiredSize: 3
+        MaxSize: 6
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      DiskSize: !Ref NodeDiskSize
+      AmiType: AL2_x86_64
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-eks-node'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+      RemoteAccess: !If
+        - HasNodeGroupKeyPair
+        - Ec2SshKey: !Ref NodeGroupKeyPair
+        - !Ref AWS::NoValue
+
+Outputs:
+  ClusterName:
+    Description: Nombre del cluster EKS.
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub '${NamePrefix}-EksClusterName'
+  ClusterArn:
+    Description: ARN del cluster EKS.
+    Value: !GetAtt EKSCluster.Arn
+    Export:
+      Name: !Sub '${NamePrefix}-EksClusterArn'
+  ClusterEndpoint:
+    Description: Endpoint API de EKS.
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub '${NamePrefix}-EksClusterEndpoint'
+  ClusterCertificateAuthorityData:
+    Description: Certificado del cluster EKS.
+    Value: !GetAtt EKSCluster.CertificateAuthorityData
+    Export:
+      Name: !Sub '${NamePrefix}-EksClusterCertificateAuthorityData'
+  NodeGroupName:
+    Description: Nombre del grupo de nodos EKS.
+    Value: !Ref EKSNodeGroup
+    Export:
+      Name: !Sub '${NamePrefix}-EksNodeGroupName'
+  NodeGroupRoleArn:
+    Description: ARN del role de nodos EKS.
+    Value: !GetAtt EKSNodeGroupRole.Arn
+    Export:
+      Name: !Sub '${NamePrefix}-EksNodeGroupRoleArn'
+  ClusterSecurityGroupId:
+    Description: Security Group generado por el cluster EKS.
+    Value: !GetAtt EKSCluster.ResourcesVpcConfig.ClusterSecurityGroupId
+    Export:
+      Name: !Sub '${NamePrefix}-EksClusterSecurityGroupId'

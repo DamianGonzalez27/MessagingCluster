@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Plantilla para desplegar instancias EC2 Ubuntu Server en los ambientes bajos.
+  Se crean dos máquinas: una para desarrollo y otra para QA, cada una en su subnet.
+
+Parameters:
+  DevSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet privada para la instancia de desarrollo.
+  QaSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet privada para la instancia de QA.
+  UbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/jammy/stable/current/amd64/hvm/ebs-gp2/ami-id
+    Description: AMI de Ubuntu Server para las instancias.
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: Tipo de instancia EC2 para los ambientes bajos.
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Par de llaves SSH para acceso administrativo.
+  SshAccessCidr:
+    Type: String
+    Default: 10.10.0.0/16
+    Description: CIDR que puede acceder por SSH a las instancias.
+  NamePrefix:
+    Type: String
+    Default: spoke
+    Description: Prefijo de nombres para recursos.
+  EnvironmentTag:
+    Type: String
+    Default: development
+
+Resources:
+  DevelopSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seguridad para instancias dev/qa en la VPC spoke.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshAccessCidr
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-dev-qa-sg'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  DevInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref UbuntuAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref DevSubnetId
+      SecurityGroupIds:
+        - !Ref DevelopSecurityGroup
+      UserData: !Base64 |
+        #!/bin/bash
+        apt-get update -y
+        apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+        add-apt-repository \"deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable\"
+        apt-get update -y
+        apt-get install -y docker-ce docker-ce-cli containerd.io
+        usermod -aG docker ubuntu
+        systemctl enable docker
+        systemctl start docker
+        curl -L https://github.com/docker/compose/releases/download/v2.18.1/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-dev-instance'
+        - Key: Environment
+          Value: development
+
+  QaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref UbuntuAmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref QaSubnetId
+      SecurityGroupIds:
+        - !Ref DevelopSecurityGroup
+      UserData: !Base64 |
+        #!/bin/bash
+        apt-get update -y
+        apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+        add-apt-repository \"deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable\"
+        apt-get update -y
+        apt-get install -y docker-ce docker-ce-cli containerd.io
+        usermod -aG docker ubuntu
+        systemctl enable docker
+        systemctl start docker
+        curl -L https://github.com/docker/compose/releases/download/v2.18.1/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-qa-instance'
+        - Key: Environment
+          Value: qa
+
+Outputs:
+  DevInstanceId:
+    Description: ID de la instancia EC2 de desarrollo.
+    Value: !Ref DevInstance
+    Export:
+      Name: !Sub '${NamePrefix}-DevInstanceId'
+  QaInstanceId:
+    Description: ID de la instancia EC2 de QA.
+    Value: !Ref QaInstance
+    Export:
+      Name: !Sub '${NamePrefix}-QaInstanceId'
+  DevelopSecurityGroupId:
+    Description: Security Group para el clúster de desarrollo / QA.
+    Value: !Ref DevelopSecurityGroup
+    Export:
+      Name: !Sub '${NamePrefix}-DevQaSecurityGroupId'

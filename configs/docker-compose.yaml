@@ -1,0 +1,109 @@
+version: '3.8'
+services:
+  zookeeper-dev:
+    image: bitnami/zookeeper:3.8
+    container_name: zookeeper-dev
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ZOO_ENABLE_AUTH=no
+      - ZOO_SERVERS=server.1=zookeeper-dev:2888:3888
+    ports:
+      - 22181:2181
+    networks:
+      - dev_net
+    volumes:
+      - zookeeper-dev-data:/bitnami/zookeeper
+
+  kafka-dev:
+    image: bitnami/kafka:latest
+    container_name: kafka-dev
+    depends_on:
+      - zookeeper-dev
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper-dev:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:29092
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    ports:
+      - 29092:9092
+    networks:
+      - dev_net
+    volumes:
+      - kafka-dev-data:/bitnami/kafka
+
+  rabbitmq-dev:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-dev
+    environment:
+      - RABBITMQ_DEFAULT_USER=dev
+      - RABBITMQ_DEFAULT_PASS=devpass
+    ports:
+      - 15672:15672
+      - 5672:5672
+    networks:
+      - dev_net
+    volumes:
+      - rabbitmq-dev-data:/var/lib/rabbitmq
+
+  zookeeper-qa:
+    image: bitnami/zookeeper:3.8
+    container_name: zookeeper-qa
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ZOO_ENABLE_AUTH=no
+      - ZOO_SERVERS=server.1=zookeeper-qa:2888:3888
+    ports:
+      - 22182:2181
+    networks:
+      - qa_net
+    volumes:
+      - zookeeper-qa-data:/bitnami/zookeeper
+
+  kafka-qa:
+    image: bitnami/kafka:latest
+    container_name: kafka-qa
+    depends_on:
+      - zookeeper-qa
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper-qa:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:29093
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    ports:
+      - 29093:9092
+    networks:
+      - qa_net
+    volumes:
+      - kafka-qa-data:/bitnami/kafka
+
+  rabbitmq-qa:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-qa
+    environment:
+      - RABBITMQ_DEFAULT_USER=qa
+      - RABBITMQ_DEFAULT_PASS=qapass
+    ports:
+      - 15674:15672
+      - 15675:5672
+    networks:
+      - qa_net
+    volumes:
+      - rabbitmq-qa-data:/var/lib/rabbitmq
+
+networks:
+  dev_net:
+    driver: bridge
+  qa_net:
+    driver: bridge
+
+volumes:
+  zookeeper-dev-data:
+  kafka-dev-data:
+  rabbitmq-dev-data:
+  zookeeper-qa-data:
+  kafka-qa-data:
+  rabbitmq-qa-data:

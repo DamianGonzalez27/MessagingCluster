@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rabbitmq
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-headless
+  namespace: rabbitmq
+  labels:
+    app: rabbitmq
+spec:
+  clusterIP: None
+  ports:
+    - port: 5672
+      name: amqp
+    - port: 15672
+      name: management
+  selector:
+    app: rabbitmq
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-management
+  namespace: rabbitmq
+  labels:
+    app: rabbitmq
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5672
+      targetPort: 5672
+      name: amqp
+    - port: 15672
+      targetPort: 15672
+      name: management
+  selector:
+    app: rabbitmq
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: rabbitmq
+spec:
+  serviceName: rabbitmq-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: bitnami/rabbitmq:3.11
+          ports:
+            - containerPort: 5672
+            - containerPort: 15672
+          env:
+            - name: RABBITMQ_USERNAME
+              value: admin
+            - name: RABBITMQ_PASSWORD
+              value: strongpassword
+            - name: RABBITMQ_ERLANG_COOKIE
+              value: rabbitcookie123
+            - name: RABBITMQ_ERLANG_NODE
+              value: !Sub 'rabbit@${HOSTNAME}.rabbitmq-headless.rabbitmq.svc.cluster.local'
+            - name: RABBITMQ_CLUSTER_PARTITION_HANDLING
+              value: autoheal
+            - name: RABBITMQ_USE_LONGNAME
+              value: 'true'
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /bitnami/rabbitmq
+  volumeClaimTemplates:
+    - metadata:
+        name: rabbitmq-data
+      spec:
+        accessModes: [ 'ReadWriteOnce' ]
+        storageClassName: gp2
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rabbitmq-ingress
+  namespace: rabbitmq
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: rabbitmq.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rabbitmq-management
+                port:
+                  number: 15672

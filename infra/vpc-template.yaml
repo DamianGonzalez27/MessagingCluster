@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  VPC principal para la cuenta spoke. Define una VPC privada con cuatro subnets,
+  un attachment a Transit Gateway y una tabla de ruteo que envía todo el
+  tráfico al Transit Gateway.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.10.0.0/16
+    Description: Rango CIDR para la VPC spoke.
+  ProdSubnetACidr:
+    Type: String
+    Default: 10.10.1.0/24
+    Description: Subnet privada de producción A.
+  ProdSubnetBCidr:
+    Type: String
+    Default: 10.10.2.0/24
+    Description: Subnet privada de producción B.
+  DevSubnetCidr:
+    Type: String
+    Default: 10.10.11.0/24
+    Description: Subnet privada para ambiente de desarrollo.
+  QaSubnetCidr:
+    Type: String
+    Default: 10.10.12.0/24
+    Description: Subnet privada para ambiente QA.
+  AvailabilityZoneA:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: !Select [0, !GetAZs '']
+  AvailabilityZoneB:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: !Select [1, !GetAZs '']
+  TransitGatewayId:
+    Type: String
+    Description: Transit Gateway que conecta la VPC spoke con la cuenta hub.
+  NamePrefix:
+    Type: String
+    Default: spoke
+    Description: Prefijo para los nombres de recursos.
+  EnvironmentTag:
+    Type: String
+    Default: spoke
+    Description: Etiqueta de entorno para identificadores.
+
+Resources:
+  SpokeVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-vpc'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  ProdPrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SpokeVpc
+      CidrBlock: !Ref ProdSubnetACidr
+      AvailabilityZone: !Ref AvailabilityZoneA
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-prod-a'
+        - Key: Environment
+          Value: production
+
+  ProdPrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SpokeVpc
+      CidrBlock: !Ref ProdSubnetBCidr
+      AvailabilityZone: !Ref AvailabilityZoneB
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-prod-b'
+        - Key: Environment
+          Value: production
+
+  DevPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SpokeVpc
+      CidrBlock: !Ref DevSubnetCidr
+      AvailabilityZone: !Ref AvailabilityZoneA
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-dev'
+        - Key: Environment
+          Value: development
+
+  QaPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SpokeVpc
+      CidrBlock: !Ref QaSubnetCidr
+      AvailabilityZone: !Ref AvailabilityZoneB
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-qa'
+        - Key: Environment
+          Value: qa
+
+  SpokeTransitGatewayAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGatewayId
+      VpcId: !Ref SpokeVpc
+      SubnetIds:
+        - !Ref ProdPrivateSubnetA
+        - !Ref ProdPrivateSubnetB
+        - !Ref DevPrivateSubnet
+        - !Ref QaPrivateSubnet
+      Options:
+        DnsSupport: enable
+        Ipv6Support: disable
+        ApplianceModeSupport: disable
+
+  SpokeRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SpokeVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-default-route-table'
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  RouteToTransitGateway:
+    Type: AWS::EC2::Route
+    DependsOn: SpokeTransitGatewayAttachment
+    Properties:
+      RouteTableId: !Ref SpokeRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      TransitGatewayId: !Ref TransitGatewayId
+
+  ProdSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProdPrivateSubnetA
+      RouteTableId: !Ref SpokeRouteTable
+
+  ProdSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProdPrivateSubnetB
+      RouteTableId: !Ref SpokeRouteTable
+
+  DevSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DevPrivateSubnet
+      RouteTableId: !Ref SpokeRouteTable
+
+  QaSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref QaPrivateSubnet
+      RouteTableId: !Ref SpokeRouteTable
+
+Outputs:
+  VpcId:
+    Description: ID de la VPC spoke.
+    Value: !Ref SpokeVpc
+    Export:
+      Name: !Sub '${NamePrefix}-VpcId'
+  ProdSubnetAId:
+    Description: Subnet privada de producción A.
+    Value: !Ref ProdPrivateSubnetA
+    Export:
+      Name: !Sub '${NamePrefix}-ProdSubnetAId'
+  ProdSubnetBId:
+    Description: Subnet privada de producción B.
+    Value: !Ref ProdPrivateSubnetB
+    Export:
+      Name: !Sub '${NamePrefix}-ProdSubnetBId'
+  DevSubnetId:
+    Description: Subnet privada para desarrollo.
+    Value: !Ref DevPrivateSubnet
+    Export:
+      Name: !Sub '${NamePrefix}-DevSubnetId'
+  QaSubnetId:
+    Description: Subnet privada para QA.
+    Value: !Ref QaPrivateSubnet
+    Export:
+      Name: !Sub '${NamePrefix}-QaSubnetId'
+  TransitGatewayAttachmentId:
+    Description: Attachment de la VPC al Transit Gateway.
+    Value: !Ref SpokeTransitGatewayAttachment
+    Export:
+      Name: !Sub '${NamePrefix}-TransitGatewayAttachmentId'
+  RouteTableId:
+    Description: Tabla de ruteo compartida para toda la VPC.
+    Value: !Ref SpokeRouteTable
+    Export:
+      Name: !Sub '${NamePrefix}-RouteTableId'
